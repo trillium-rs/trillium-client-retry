@@ -1,6 +1,6 @@
 [package]
 name = "trillium-client-retry"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2024"
 description = "Automatic retry/backoff middleware for the trillium HTTP client"
 license = "MIT OR Apache-2.0"
@@ -8,9 +8,6 @@ repository = "https://github.com/trillium-rs/trillium-client-retry"
 readme = "README.md"
 keywords = ["trillium", "client", "retry", "backoff"]
 categories = ["web-programming"]
-
-[package.metadata.docs.rs]
-all-features = true
 
 [dependencies]
 trillium-client = "0.9.5"
