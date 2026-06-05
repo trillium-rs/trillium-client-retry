@@ -3,17 +3,17 @@
 //! [`RetryHandler`] is a [`ClientHandler`] that re-issues a request when it fails in a way that
 //! is worth retrying — a transport-level error (connection refused, reset, timeout) or a
 //! retryable response status (`429`, `503` by default) — spacing attempts out with a configurable
-//! [`Backoff`] and honoring a server-advertised `Retry-After`.
+//! backoff schedule and honoring a server-advertised `Retry-After`.
 //!
 //! ```no_run
 //! use std::time::Duration;
 //! use trillium_client::Client;
-//! use trillium_client_retry::{Backoff, RetryHandler};
+//! use trillium_client_retry::RetryHandler;
 //! use trillium_testing::client_config;
 //!
 //! let client = Client::new(client_config()).with_handler(
 //!     RetryHandler::default()
-//!         .with_backoff(Backoff::exponential(Duration::from_millis(100)))
+//!         .with_exponential_backoff(Duration::from_millis(100))
 //!         .with_max_attempts(5),
 //! );
 //! ```
@@ -27,10 +27,10 @@
 //! ## What is retried
 //!
 //! By default, retries are limited to idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS,
-//! TRACE — [`Methods::Idempotent`]). Within that gate, a request is retried when it fails with a
-//! transport error or returns a status in the configured set. Adjust with [`with_methods`],
-//! [`with_statuses`], and [`with_transport_errors`], or replace the whole decision with
-//! [`retry_when`] / [`with_decision`].
+//! TRACE). Within that gate, a request is retried when it fails with a transport error or returns
+//! a status in the configured set. Adjust with [`with_all_methods`], [`with_statuses`], and
+//! [`with_transport_errors`], or replace the whole decision with [`retry_when`] /
+//! [`with_decision`].
 //!
 //! ## Request bodies
 //!
@@ -54,7 +54,7 @@
 //! elapsed budget). `Retry-After` HTTP-date values are not yet parsed and fall back to the
 //! computed backoff.
 //!
-//! [`with_methods`]: RetryHandler::with_methods
+//! [`with_all_methods`]: RetryHandler::with_all_methods
 //! [`with_statuses`]: RetryHandler::with_statuses
 //! [`with_transport_errors`]: RetryHandler::with_transport_errors
 //! [`retry_when`]: RetryHandler::retry_when
@@ -80,7 +80,7 @@
 mod readme {}
 
 mod backoff;
-pub use backoff::{Backoff, Jitter};
+use backoff::{Backoff, Kind};
 use std::{
     borrow::Cow,
     fmt,
@@ -93,35 +93,14 @@ use trillium_client::{
     Method, Result, Status,
 };
 
-/// Which request methods are eligible for retry.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Methods {
-    /// Only retry idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS, TRACE), per
-    /// [RFC 9110 §9.2.2](https://www.rfc-editor.org/rfc/rfc9110#section-9.2.2). This is the
-    /// default: replaying a non-idempotent request (e.g. POST) risks a duplicate side effect.
-    #[default]
-    Idempotent,
-    /// Retry regardless of method, including POST and other non-idempotent requests. Use only
-    /// when the endpoint is known to be safe to replay (e.g. it is idempotent in practice or
-    /// guarded by an idempotency key).
-    All,
-}
-
-impl Methods {
-    fn allows(self, method: Method) -> bool {
-        match self {
-            Self::All => true,
-            Self::Idempotent => matches!(
-                method,
-                Method::Get
-                    | Method::Head
-                    | Method::Put
-                    | Method::Delete
-                    | Method::Options
-                    | Method::Trace
-            ),
-        }
-    }
+/// Whether `method` is eligible for retry under the idempotent-only gate (GET, HEAD, PUT, DELETE,
+/// OPTIONS, TRACE), per [RFC 9110 §9.2.2](https://www.rfc-editor.org/rfc/rfc9110#section-9.2.2).
+/// Replaying a non-idempotent request (e.g. POST) risks a duplicate side effect.
+fn is_idempotent(method: Method) -> bool {
+    matches!(
+        method,
+        Method::Get | Method::Head | Method::Put | Method::Delete | Method::Options | Method::Trace
+    )
 }
 
 type Predicate = Arc<dyn Fn(&Conn) -> bool + Send + Sync>;
@@ -136,7 +115,7 @@ pub struct RetryHandler {
     max_attempts: u32,
     max_elapsed: Duration,
     statuses: Arc<[Status]>,
-    methods: Methods,
+    all_methods: bool,
     transport_errors: bool,
     honor_retry_after: bool,
     max_retry_after: Option<Duration>,
@@ -147,11 +126,11 @@ pub struct RetryHandler {
 impl Default for RetryHandler {
     fn default() -> Self {
         Self {
-            backoff: Backoff::exponential(Duration::from_millis(100)),
+            backoff: Backoff::default(),
             max_attempts: 4,
             max_elapsed: Duration::from_secs(30),
             statuses: Arc::from([Status::TooManyRequests, Status::ServiceUnavailable].as_slice()),
-            methods: Methods::Idempotent,
+            all_methods: false,
             transport_errors: true,
             honor_retry_after: true,
             max_retry_after: None,
@@ -168,10 +147,65 @@ impl RetryHandler {
         Self::default()
     }
 
-    /// Set the [`Backoff`] schedule. Defaults to exponential from 100ms with full jitter.
+    /// Wait a fixed `delay` before every retry.
+    ///
+    /// One of four mutually exclusive backoff curves (the others are
+    /// [`with_linear_backoff`](Self::with_linear_backoff),
+    /// [`with_exponential_backoff`](Self::with_exponential_backoff), and
+    /// [`with_custom_backoff`](Self::with_custom_backoff)); the last one set wins. The default
+    /// curve is exponential from 100ms. [`with_max_delay`](Self::with_max_delay) and
+    /// [`without_jitter`](Self::without_jitter) apply on top of whichever curve is chosen.
     #[must_use]
-    pub fn with_backoff(mut self, backoff: Backoff) -> Self {
-        self.backoff = backoff;
+    pub fn with_constant_backoff(mut self, delay: Duration) -> Self {
+        self.backoff.kind = Kind::Constant(delay);
+        self
+    }
+
+    /// Grow the delay linearly: `step * retry_number` (the first retry waits `step`). See
+    /// [`with_constant_backoff`](Self::with_constant_backoff) for how the curves combine.
+    #[must_use]
+    pub fn with_linear_backoff(mut self, step: Duration) -> Self {
+        self.backoff.kind = Kind::Linear(step);
+        self
+    }
+
+    /// Double the delay each retry: `base * 2^(retry_number - 1)` (the first retry waits `base`).
+    /// This is the default curve, from 100ms. See
+    /// [`with_constant_backoff`](Self::with_constant_backoff) for how the curves combine.
+    #[must_use]
+    pub fn with_exponential_backoff(mut self, base: Duration) -> Self {
+        self.backoff.kind = Kind::Exponential(base);
+        self
+    }
+
+    /// Compute the delay with a fully custom curve. The closure receives the 1-based retry number
+    /// and the conn carrying the response or error being retried, and returns the base delay
+    /// (before the [`with_max_delay`](Self::with_max_delay) cap and jitter). See
+    /// [`with_constant_backoff`](Self::with_constant_backoff) for how the curves combine.
+    #[must_use]
+    pub fn with_custom_backoff(
+        mut self,
+        f: impl Fn(u32, &Conn) -> Duration + Send + Sync + 'static,
+    ) -> Self {
+        self.backoff.kind = Kind::Custom(Arc::new(f));
+        self
+    }
+
+    /// Cap the computed backoff delay at `max`, applied before jitter. Defaults to uncapped. This
+    /// caps *your* backoff curve; a server-advertised `Retry-After` is capped separately by
+    /// [`with_max_retry_after`](Self::with_max_retry_after).
+    #[must_use]
+    pub fn with_max_delay(mut self, max: Duration) -> Self {
+        self.backoff.max_delay = Some(max);
+        self
+    }
+
+    /// Use the computed backoff delay exactly, with no randomization. By default, full jitter is
+    /// applied — the actual delay is chosen uniformly at random from `0..=computed` — to spread
+    /// retries from many clients across time and avoid a synchronized thundering herd.
+    #[must_use]
+    pub fn without_jitter(mut self) -> Self {
+        self.backoff.jitter = backoff::Jitter::None;
         self
     }
 
@@ -198,10 +232,14 @@ impl RetryHandler {
         self
     }
 
-    /// Set which methods are eligible for retry. Defaults to [`Methods::Idempotent`].
+    /// Retry regardless of request method, including POST and other non-idempotent requests. By
+    /// default only idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS, TRACE) are retried, since
+    /// replaying a non-idempotent request risks a duplicate side effect. Enable this only when the
+    /// endpoint is known to be safe to replay (e.g. it is idempotent in practice or guarded by an
+    /// idempotency key).
     #[must_use]
-    pub fn with_methods(mut self, methods: Methods) -> Self {
-        self.methods = methods;
+    pub fn with_all_methods(mut self) -> Self {
+        self.all_methods = true;
         self
     }
 
@@ -231,7 +269,7 @@ impl RetryHandler {
 
     /// Replace the built-in retry predicate. The closure decides, from the conn carrying the
     /// response or transport error, whether to retry — fully replacing the method gate, status
-    /// set, and transport-error toggle. Timing still comes from the configured [`Backoff`].
+    /// set, and transport-error toggle. Timing still comes from the configured backoff schedule.
     #[must_use]
     pub fn retry_when(mut self, predicate: impl Fn(&Conn) -> bool + Send + Sync + 'static) -> Self {
         self.predicate = Some(Arc::new(predicate));
@@ -262,7 +300,7 @@ impl RetryHandler {
         if let Some(predicate) = &self.predicate {
             return predicate(conn);
         }
-        if !self.methods.allows(conn.method()) {
+        if !self.all_methods && !is_idempotent(conn.method()) {
             return false;
         }
         if conn.error().is_some() {
@@ -402,7 +440,7 @@ impl fmt::Debug for RetryHandler {
             .field("max_attempts", &self.max_attempts)
             .field("max_elapsed", &self.max_elapsed)
             .field("statuses", &self.statuses)
-            .field("methods", &self.methods)
+            .field("all_methods", &self.all_methods)
             .field("transport_errors", &self.transport_errors)
             .field("honor_retry_after", &self.honor_retry_after)
             .field("max_retry_after", &self.max_retry_after)

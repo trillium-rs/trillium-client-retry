@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release: `RetryHandler`, a `trillium-client` `ClientHandler` that retries failed
   requests with configurable backoff.
-- `Backoff` schedule (`constant` / `linear` / `exponential` / `custom`) with `Jitter` and an
-  optional max-delay cap.
-- Retry decision configurable via `with_statuses`, `with_methods` (`Methods::Idempotent` /
-  `Methods::All`), and `with_transport_errors`, with `retry_when` and `with_decision` escape
-  hatches.
+- Backoff schedule configured directly on `RetryHandler` (`with_constant_backoff` /
+  `with_linear_backoff` / `with_exponential_backoff` / `with_custom_backoff`), with
+  `with_max_delay` and `without_jitter` modifiers (full jitter on by default).
+- Retry decision configurable via `with_statuses`, `with_all_methods` (idempotent methods only by
+  default), and `with_transport_errors`, with `retry_when` and `with_decision` escape hatches.
 - Limits: `with_max_attempts` and a `with_max_elapsed` wall-clock budget that clamps each
   attempt's timeout.
 - `Retry-After` (delta-seconds) honored by default, capped by `with_max_retry_after`.

@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 use trillium_client::{Body, Client, KnownHeaderName::RetryAfter, Status};
-use trillium_client_retry::{Backoff, Jitter, Methods, RetryHandler};
+use trillium_client_retry::RetryHandler;
 use trillium_testing::{
     ServerConnector, TestResult, futures_lite, harness, prelude::Conn as ServerConn, test,
 };
@@ -16,7 +16,8 @@ use trillium_testing::{
 /// A `RetryHandler` with backoff stripped out so tests don't actually sleep.
 fn instant_retry() -> RetryHandler {
     RetryHandler::default()
-        .with_backoff(Backoff::constant(Duration::ZERO).with_jitter(Jitter::None))
+        .with_constant_backoff(Duration::ZERO)
+        .without_jitter()
 }
 
 /// Builds an in-process client whose server fails (with `status`) for the first `fail_times`
@@ -78,7 +79,7 @@ async fn retries_post_when_methods_all() -> TestResult {
     let (client, hits) = flaky(
         1,
         Status::ServiceUnavailable,
-        instant_retry().with_methods(Methods::All),
+        instant_retry().with_all_methods(),
     );
     let conn = client.post("http://example.com/").await?;
     assert_eq!(conn.status(), Some(Status::Ok));

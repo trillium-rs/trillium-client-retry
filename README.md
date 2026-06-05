@@ -25,12 +25,12 @@ default; request bodies are replayed when they can be cloned.
 ```rust,no_run
 use std::time::Duration;
 use trillium_client::Client;
-use trillium_client_retry::{Backoff, RetryHandler};
+use trillium_client_retry::RetryHandler;
 use trillium_testing::client_config;
 
 let client = Client::new(client_config()).with_handler(
     RetryHandler::default()
-        .with_backoff(Backoff::exponential(Duration::from_millis(100)))
+        .with_exponential_backoff(Duration::from_millis(100))
         .with_max_attempts(5),
 );
 ```
