@@ -247,6 +247,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
+name = "castaway"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dec551ab6e7578819132c713a93c022a05d60159dc86e7a7050223577484c55a"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -273,6 +282,19 @@ name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
+
+[[package]]
+name = "compact_str"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79fcda08c33bb58b97008b2cdada6622500e949e060f5913361763121abd2416"
+dependencies = [
+ "castaway",
+ "cfg-if",
+ "itoa",
+ "static_assertions",
+ "zmij",
+]
 
 [[package]]
 name = "concurrent-queue"
@@ -1186,26 +1208,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
-name = "smartcow"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "656fcb1c1fca8c4655372134ce87d8afdf5ec5949ebabe8d314be0141d8b5da2"
-dependencies = [
- "smartstring",
-]
-
-[[package]]
-name = "smartstring"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fb72c633efbaa2dd666986505016c32c3044395ceaf881518399d2f4127ee29"
-dependencies = [
- "autocfg",
- "static_assertions",
- "version_check",
-]
-
-[[package]]
 name = "sonic-number"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1424,10 +1426,11 @@ dependencies = [
 
 [[package]]
 name = "trillium-client"
-version = "0.9.5"
+version = "0.9.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7565724f200767938eb6502e075485eb6ffa6733402a554a89c79f2980e5ae46"
+checksum = "56c46cfbfd8304977f70e8c422f0cab253b6e7ccb4eb3ce7d9c52ee070f666dc"
 dependencies = [
+ "async-lock",
  "crossbeam-queue",
  "dashmap",
  "encoding_rs",
@@ -1436,6 +1439,7 @@ dependencies = [
  "log",
  "memchr",
  "mime",
+ "smallvec",
  "trillium-http",
  "trillium-macros",
  "trillium-server-common",
@@ -1452,11 +1456,12 @@ dependencies = [
 
 [[package]]
 name = "trillium-http"
-version = "1.3.5"
+version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c73d5a99772634ec9980e42a708c65ec69cc1dcca6c423030c9560fae831b51"
+checksum = "f1748f6e05f2016a741bd403b03b4ef92cdfe8c0cfc2ac95b27718f74e0aa720"
 dependencies = [
  "atomic-waker",
+ "compact_str",
  "encoding_rs",
  "event-listener",
  "fastrand",
@@ -1469,8 +1474,6 @@ dependencies = [
  "mime",
  "pin-project-lite",
  "smallvec",
- "smartcow",
- "smartstring",
  "swansong",
  "sync_wrapper",
  "thiserror",
@@ -1491,12 +1494,13 @@ dependencies = [
 
 [[package]]
 name = "trillium-server-common"
-version = "0.7.4"
+version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdfd4fadcb61c240282901bc27424147780e556714a2d602f7e4afa187d2a521"
+checksum = "fc17bdff17cb1869a68d81aa9112e01b3df7bd58af4e598be58a54fb334412b9"
 dependencies = [
  "async-channel",
  "async_cell",
+ "atomic-waker",
  "cfg_aliases",
  "fieldwork",
  "futures-lite",
@@ -1504,6 +1508,7 @@ dependencies = [
  "log",
  "pin-project-lite",
  "rlimit",
+ "smallvec",
  "swansong",
  "trillium",
  "trillium-http",
@@ -1561,9 +1566,9 @@ dependencies = [
 
 [[package]]
 name = "type-set"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "845e18586b78ef401c37d9d2d2cca631c19816d5aa26af12647e828739bd6614"
+checksum = "5a6d0bbc2be93a6be556bf72da67cab01b87e650f9dbd8a095e8b1a3d4712dfb"
 
 [[package]]
 name = "unicode-ident"
