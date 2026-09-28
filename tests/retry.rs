@@ -171,3 +171,46 @@ async fn honors_retry_after_header() -> TestResult {
     assert_eq!(hits.load(Ordering::SeqCst), 2);
     Ok(())
 }
+
+/// A server that fails its first request with 503, then takes `slow` to answer the retry.
+fn slow_retry_server(
+    slow: Duration,
+) -> impl Fn(ServerConn) -> futures_lite::future::Boxed<ServerConn> {
+    let hits = Arc::new(AtomicU32::new(0));
+    move |conn: ServerConn| {
+        let hits = Arc::clone(&hits);
+        Box::pin(async move {
+            if hits.fetch_add(1, Ordering::SeqCst) == 0 {
+                conn.with_status(Status::ServiceUnavailable)
+            } else {
+                {
+                    use trillium_testing::RuntimeTrait;
+                    trillium_testing::runtime().delay(slow).await;
+                }
+                conn.ok("recovered")
+            }
+        })
+    }
+}
+
+#[test(harness)]
+async fn elapsed_budget_clamps_a_slow_retry() -> TestResult {
+    let client = Client::new(ServerConnector::new(slow_retry_server(
+        Duration::from_millis(500),
+    )))
+    .with_handler(instant_retry().with_max_elapsed(Duration::from_millis(100)));
+    assert!(client.get("http://example.com/").await.is_err());
+    Ok(())
+}
+
+#[test(harness)]
+async fn no_elapsed_budget_lets_a_slow_retry_finish() -> TestResult {
+    let client = Client::new(ServerConnector::new(slow_retry_server(
+        Duration::from_millis(500),
+    )))
+    .with_handler(instant_retry().with_max_elapsed(None));
+    let mut conn = client.get("http://example.com/").await?;
+    assert_eq!(conn.status(), Some(Status::Ok));
+    assert_eq!(conn.response_body().read_string().await?, "recovered");
+    Ok(())
+}
