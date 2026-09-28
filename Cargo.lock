@@ -1517,9 +1517,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-smol"
-version = "0.6.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3a294ead12d0e213940a5c6c41958ddbc0d1a15097e7afec95e60a529e7e04b"
+checksum = "b33886ac313a66d70c2b06c0ff22050a4047fd082d782618f56ecc62783186f2"
 dependencies = [
  "async-executor",
  "async-global-executor",
@@ -1538,9 +1538,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-testing"
-version = "0.10.0"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50a2fbe24a29098c729ed1422038089a157f19598532ade563f829773d5b1a4c"
+checksum = "ae16f51f67e114a17665186b83068f9c6c9f230a593117d97f5586f2922591d9"
 dependencies = [
  "async-channel",
  "async-dup",
