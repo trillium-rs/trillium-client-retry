@@ -46,6 +46,11 @@
 //! attempt uses the client's own timeout, since the budget is established once the request is in
 //! flight; keep `max_elapsed` at least as large as the client timeout.)
 //!
+//! `with_max_elapsed(None)` removes the budget: attempts are then bounded only by
+//! [`with_max_attempts`], and each retry runs under the client's own timeout, if any. That is the
+//! setting for requests whose time to first byte is long and legitimately variable — a retry cut
+//! short by a clamped timeout fails for the clamp, not for the upstream.
+//!
 //! ## `Retry-After`
 //!
 //! When [`honor_retry_after`](RetryHandler::with_honor_retry_after) is set (the default) and the
@@ -113,7 +118,7 @@ type Decision = Arc<dyn Fn(&Conn, u32) -> Option<Duration> + Send + Sync>;
 pub struct RetryHandler {
     backoff: Backoff,
     max_attempts: u32,
-    max_elapsed: Duration,
+    max_elapsed: Option<Duration>,
     statuses: Arc<[Status]>,
     all_methods: bool,
     transport_errors: bool,
@@ -128,7 +133,7 @@ impl Default for RetryHandler {
         Self {
             backoff: Backoff::default(),
             max_attempts: 4,
-            max_elapsed: Duration::from_secs(30),
+            max_elapsed: Some(Duration::from_secs(30)),
             statuses: Arc::from([Status::TooManyRequests, Status::ServiceUnavailable].as_slice()),
             all_methods: false,
             transport_errors: true,
@@ -217,11 +222,13 @@ impl RetryHandler {
         self
     }
 
-    /// Set the total wall-clock budget across all attempts. Defaults to 30 seconds. This is a
-    /// hard ceiling: each retry's timeout is clamped to the time remaining.
+    /// Set the total wall-clock budget across all attempts, or `None` for no budget. Defaults to
+    /// 30 seconds. A budget is a hard ceiling: each retry's timeout is clamped to the time
+    /// remaining. Without one, retries are bounded only by the attempt count, and each runs under
+    /// the client's own timeout.
     #[must_use]
-    pub fn with_max_elapsed(mut self, max_elapsed: Duration) -> Self {
-        self.max_elapsed = max_elapsed;
+    pub fn with_max_elapsed(mut self, max_elapsed: impl Into<Option<Duration>>) -> Self {
+        self.max_elapsed = max_elapsed.into();
         self
     }
 
@@ -320,7 +327,7 @@ impl RetryHandler {
         }
     }
 
-    fn build_followup(&self, conn: &Conn, state: RetryState, remaining: Duration) -> Conn {
+    fn build_followup(&self, conn: &Conn, state: RetryState, remaining: Option<Duration>) -> Conn {
         let mut followup = conn.client().build_conn(conn.method(), conn.url().clone());
 
         // Strip transport/body-description headers; `finalize_headers` re-derives them for the
@@ -335,8 +342,13 @@ impl RetryHandler {
             followup.set_request_body(replayed);
         }
 
-        let timeout = conn.timeout().map_or(remaining, |t| t.min(remaining));
-        followup.set_timeout(timeout);
+        let timeout = match (conn.timeout(), remaining) {
+            (Some(t), Some(r)) => Some(t.min(r)),
+            (t, r) => t.or(r),
+        };
+        if let Some(timeout) = timeout {
+            followup.set_timeout(timeout);
+        }
 
         followup.insert_state(RetryState {
             attempts: state.attempts + 1,
@@ -352,7 +364,7 @@ impl ClientHandler for RetryHandler {
         if conn.state::<RetryState>().is_none() {
             conn.insert_state(RetryState {
                 attempts: 1,
-                deadline: Instant::now() + self.max_elapsed,
+                deadline: self.max_elapsed.map(|budget| Instant::now() + budget),
             });
         }
 
@@ -387,14 +399,19 @@ impl ClientHandler for RetryHandler {
         let delay = self.effective_delay(conn, base_delay);
 
         // Not enough budget left to both wait and attempt — give up now.
-        if Instant::now() + delay >= state.deadline {
+        if state
+            .deadline
+            .is_some_and(|deadline| Instant::now() + delay >= deadline)
+        {
             return Ok(());
         }
 
         conn.client().connector().runtime().delay(delay).await;
 
-        let remaining = state.deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
+        let remaining = state
+            .deadline
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        if remaining.is_some_and(|r| r.is_zero()) {
             return Ok(());
         }
 
@@ -423,7 +440,8 @@ fn retry_after(conn: &Conn) -> Option<Duration> {
 #[derive(Clone, Copy)]
 struct RetryState {
     attempts: u32,
-    deadline: Instant,
+    /// `None` when the handler has no elapsed budget.
+    deadline: Option<Instant>,
 }
 
 /// Snapshot of the request body's replayability, taken in `run` before the network consumes it.
